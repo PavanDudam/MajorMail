@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from source import models
 
 load_dotenv()
 
@@ -51,3 +52,16 @@ def get_google_user_info(credentials):
     user_info = user_info_service.userinfo().get().execute()
 
     return user_info
+
+def rebuild_credentials(user_token:models.UserToken)->Credentials:
+    """
+    Rebuilds a Google Credentials object from the token data stored in our database.
+    """
+    return Credentials(
+        token=user_token.access_token,
+        refresh_token=user_token.refresh_token,
+        token_uri=client_config['web']['token_uri'],
+        client_id=client_config['web']['client_id'],
+        client_secret=client_config['web']['client_secret'],
+        scopes=SCOPES
+    )

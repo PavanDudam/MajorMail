@@ -1,5 +1,8 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, Request
+from pdb import run
+from pyexpat.errors import messages
+from source import gmail_service
+from fastapi import FastAPI, Depends, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -127,3 +130,34 @@ async def auth_callback(request: Request, db: AsyncSession = Depends(get_db)):
         print(f"An error occurred during authentication: {e}")
         return JSONResponse(status_code=500, content={"message": "Authentication failed."})
 
+@app.get("/emails/fetch/{user_email}", tags=['Emails'])
+async def fetch_emails(user_email:str, db:AsyncSession=Depends(get_db)):
+    """
+    Fetches recent emails for a given user and stores them in the database.
+    """
+    #1.Get user and their tokens
+    user = await crud.get_user_by_email(db, email=user_email)
+    if not user or not user.tokens:
+        raise HTTPException(status_code=404, detail="User or user tokens not found. Please login first")
+    
+    #2. Rebuild Credentials
+    credentials=auth.rebuild_credentials(user.tokens[0])
+
+    #3. Connect to gmail service
+    service=gmail_service.get_gmail_service(credentials)
+
+    #4. Fetch list of  email IDs
+    messages=await run_in_threadpool(gmail_service.fetch_email_list, service)
+    if not messages:
+        return {"message":"NO new emails found."}
+    
+    #5. Fetch, Parse,  and save each email
+    fetched_count = 0
+    for message in messages:
+        raw_email=await run_in_threadpool(gmail_service.fetch_email_details, service, message['id'])
+        parsed_email = gmail_service.parse_email(raw_email)
+        if parsed_email:
+            await crud.create_email(db, user, parsed_email)
+            fetched_count += 1
+        
+    return {"message": f"Successfully fetched and saved {fetched_count} emails."}
