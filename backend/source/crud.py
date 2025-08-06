@@ -99,3 +99,29 @@ async def create_email(db: AsyncSession, owner: models.User, email_data: dict):
     db.add(new_email)
     await db.commit()
     print(f"Saved new email from {new_email.sender} with subject: {new_email.subject}")
+
+
+async def get_unprocessed_emails(db:AsyncSession, user:models.User)->list[models.Email]:
+    """
+    Fetches all emails for a user that have not yet been summarized.
+    """
+    statement = (
+        select(models.Email)
+        .where(models.Email.owner_id == user.id)
+        .where(models.Email.summary == None)
+    )
+    
+    results = await db.execute(statement)
+    return results.scalars().all()
+
+async def update_email_summary(db:AsyncSession, email_id:int, summary:str):
+    """
+    Updates a specific email in the database with its new summary.
+    """
+    email_to_update = await db.get(models.Email, email_id)
+    if email_to_update:
+        email_to_update.summary = summary
+        db.add(email_to_update)
+        await db.commit()
+        print(f"INFO:     Updated summary for email ID: {email_id}")
+

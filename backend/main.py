@@ -2,13 +2,14 @@ from contextlib import asynccontextmanager
 from pdb import run
 from pyexpat.errors import messages
 from source import gmail_service
-from fastapi import FastAPI, Depends, Request, HTTPException
+from source import ai_service
+from fastapi import FastAPI, Depends, Request, HTTPException, BackgroundTasks
 from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from source.database import get_db, create_db_and_tables
 from source.models import User, UserToken, Email
-from source import auth, crud
+from source import auth, crud, ai_service, models
 import os
 import traceback
 
@@ -161,3 +162,40 @@ async def fetch_emails(user_email:str, db:AsyncSession=Depends(get_db)):
             fetched_count += 1
         
     return {"message": f"Successfully fetched and saved {fetched_count} emails."}
+
+async def process_single_email_summary(email_id: int, db: AsyncSession):
+    """
+    A helper function that can be run in the background.
+    It fetches an email, generates a summary, and saves it.
+    """
+    email = await db.get(models.Email, email_id)
+    if email and email.body:
+        # Run the slow AI model in a threadpool to not block the async event loop
+        summary = await run_in_threadpool(ai_service.summarize_text, email.body)
+        await crud.update_email_summary(db, email_id, summary)
+
+
+@app.post("/emails/process/{user_email}", tags=["AI Processing"])
+async def process_emails(
+    user_email: str, 
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Finds unprocessed emails for a user and starts background tasks to summarize them.
+    """
+    user = await crud.get_user_by_email(db, email=user_email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+        
+    emails_to_process = await crud.get_unprocessed_emails(db, user)
+    if not emails_to_process:
+        return {"message": "No new emails to process."}
+
+    # Add a background task for each email
+    for email in emails_to_process:
+        background_tasks.add_task(process_single_email_summary, email.id, db)
+        
+    return {
+        "message": f"Started processing {len(emails_to_process)} emails in the background."
+    }
