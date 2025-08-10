@@ -1,9 +1,9 @@
-# app/crud.py
-
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlmodel import select
 from source import models
+from typing import Optional
+from sqlalchemy import func
 
 async def get_user_by_email(db: AsyncSession, email: str) -> models.User | None:
     """
@@ -125,3 +125,42 @@ async def update_email_summary(db:AsyncSession, email_id:int, summary:str):
         await db.commit()
         print(f"INFO:     Updated summary for email ID: {email_id}")
 
+async def update_email_category(db: AsyncSession, email_id: int, category: str):
+    """Stages an update to an email's category. Does NOT commit."""
+    email_to_update = await db.get(models.Email, email_id)
+    if email_to_update:
+        email_to_update.category = category
+        db.add(email_to_update)
+        print(f"INFO:     Staged category update for email ID: {email_id} to '{category}'")
+        
+async def update_email_priority(db: AsyncSession, email_id: int, score: int):
+    """
+    Stages an update to an email's priority score. Does NOT commit.
+    """
+    email_to_update = await db.get(models.Email, email_id)
+    if email_to_update:
+        email_to_update.priority_score = score
+        db.add(email_to_update)
+        print(f"INFO:     Staged priority score update for email ID: {email_id} to {score}")
+        
+async def get_emails_for_user(
+    db: AsyncSession, 
+    user: models.User, 
+    category: Optional[str] = None
+) -> list[models.Email]:
+    """
+    Fetches all emails for a user, sorted by priority, with an optional category filter.
+    """
+    statement = (
+        select(models.Email)
+        .where(models.Email.owner_id == user.id)
+        .order_by(models.Email.priority_score.desc(), models.Email.received_at.desc())
+    )
+    
+    # If a category is provided, add it as a filter to the query
+    if category:
+        # We convert both the database column and the user's input to lowercase
+        statement = statement.where(func.lower(models.Email.category) == category.lower())
+        
+    results = await db.execute(statement)
+    return results.scalars().all()

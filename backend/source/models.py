@@ -30,7 +30,7 @@ class Email(SQLModel, table=True):
 
     summary: Optional[str] = Field(default=None, sa_column=Column(TEXT))
     category: str = Field(default="Uncategorized", index=True)
-    priority_score: int = Field(default=0)
+    priority_score: int = Field(default=0, index=True)
     received_at: Optional[datetime] = Field(
         default=None, sa_column=Column(TIMESTAMP(timezone=True))
     )
@@ -46,3 +46,17 @@ class User(SQLModel, table=True):
     
     tokens: List[UserToken] = Relationship(back_populates="user", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
     emails: List[Email] = Relationship(back_populates="owner", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
+
+
+class EmailRead(SQLModel):
+    """
+    This model defines the data structure for an email when it's sent
+    from the API to the client. It excludes sensitive or unnecessary fields.
+    """
+    id: int
+    subject: Optional[str]
+    sender: Optional[str]
+    summary: Optional[str]
+    category: str
+    priority_score: int
+    received_at: Optional[datetime]
