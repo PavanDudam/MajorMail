@@ -140,3 +140,36 @@ def calculate_priority_score(email_data: dict, user_email: str) -> int:
         score += 5
         
     return score
+
+ACTION_KEYWORDS = {
+    "Schedule Event": ["schedule", "meeting", "call", "appointment", "zoom link", "calendar", "confirm a time"],
+    # NOTE: We removed the generic "?" to make this more accurate
+    "Reply Needed": ["feedback", "your thoughts", "let me know", "confirm", "are you available", "question is"],
+    "For Your Information (FYI)": ["update", "fyi", "just so you know", "heads up", "announcement", "receipt", "confirmation"]
+}
+
+def determine_action(text: str, category: str) -> str | None:
+    """
+    Determines a suggested action for an email based on its category and keywords.
+    """
+    # Step 1: Use the category to exclude emails that don't need action.
+    if category in ["Promotions", "Newsletters", "Social", "Updates"]:
+        return "No Action Needed"
+
+    lower_text = text.lower()
+
+    # Step 2: Check for specific, high-confidence actions first.
+    if any(keyword in lower_text for keyword in ACTION_KEYWORDS["Schedule Event"]):
+        return "Schedule Event"
+        
+    if any(keyword in lower_text for keyword in ACTION_KEYWORDS["Reply Needed"]):
+        return "Reply Needed"
+
+    if any(keyword in lower_text for keyword in ACTION_KEYWORDS["For Your Information (FYI)"]):
+        return "For Your Information (FYI)"
+
+    # Step 3: If it's a Work or Personal email with no other keywords, it likely needs a reply.
+    if category in ["Work", "Personal", "Finance"]:
+        return "Reply Needed"
+
+    return None

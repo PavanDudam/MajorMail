@@ -31,6 +31,7 @@ class Email(SQLModel, table=True):
     summary: Optional[str] = Field(default=None, sa_column=Column(TEXT))
     category: str = Field(default="Uncategorized", index=True)
     priority_score: int = Field(default=0, index=True)
+    suggested_action : Optional[str] = Field(default=None, index=True)
     received_at: Optional[datetime] = Field(
         default=None, sa_column=Column(TIMESTAMP(timezone=True))
     )
@@ -60,3 +61,15 @@ class EmailRead(SQLModel):
     category: str
     priority_score: int
     received_at: Optional[datetime]
+    suggested_action : Optional[str]
+
+class SenderDossier(SQLModel):
+    """
+    This model defines the data structure for the sender dossier response.
+    """
+    total_emails: int
+    category_counts: dict[str, int]
+    # We can add more fields later, like 'latest_email_summary'
+    average_priority_score: float
+    latest_email_summary: Optional[str]
+    most_common_action: Optional[str]

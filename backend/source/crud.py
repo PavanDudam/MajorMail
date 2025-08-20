@@ -4,6 +4,7 @@ from sqlmodel import select
 from source import models
 from typing import Optional
 from sqlalchemy import func
+from collections import Counter
 
 async def get_user_by_email(db: AsyncSession, email: str) -> models.User | None:
     """
@@ -164,3 +165,66 @@ async def get_emails_for_user(
         
     results = await db.execute(statement)
     return results.scalars().all()
+
+async def update_email_action(db: AsyncSession, email_id: int, action: str | None):
+    """
+    Stages an update to an email's suggested action. Does NOT commit.
+    """
+    email_to_update = await db.get(models.Email, email_id)
+    if email_to_update:
+        email_to_update.suggested_action = action
+        db.add(email_to_update)
+        print(f"INFO:     Staged action update for email ID: {email_id} to '{action}'")
+
+# --- NEW FEATURE: Dossier ---
+async def get_dossier_for_sender(
+    db: AsyncSession, 
+    user: models.User, 
+    sender_address: str
+) -> dict:
+    """
+    Analyzes all emails from a specific sender for a given user.
+    """
+    statement = (
+        select(models.Email)
+        .where(models.Email.owner_id == user.id)
+        .where(models.Email.sender.ilike(f"%{sender_address}%"))
+        .order_by(models.Email.received_at.desc()) # Order by date to easily find the latest
+    )
+    
+    results = await db.execute(statement)
+    sender_emails = results.scalars().all()
+    
+    if not sender_emails:
+        return {
+            "total_emails": 0,
+            "category_counts": {},
+            "average_priority_score": 0,
+            "latest_email_summary": None,
+            "most_common_action": None
+        }
+
+    total_emails = len(sender_emails)
+    
+    # Calculate category counts
+    category_counts = Counter(email.category for email in sender_emails)
+    
+    # --- NEW CALCULATIONS ---
+    # Calculate average priority score
+    total_priority = sum(email.priority_score for email in sender_emails)
+    average_priority_score = round(total_priority / total_emails, 2) if total_emails > 0 else 0
+
+    # Get the summary of the most recent email (it's the first in the sorted list)
+    latest_email_summary = sender_emails[0].summary
+
+    # Find the most common suggested action, ignoring None values
+    actions = [email.suggested_action for email in sender_emails if email.suggested_action]
+    most_common_action = Counter(actions).most_common(1)[0][0] if actions else "None"
+    
+    return {
+        "total_emails": total_emails,
+        "category_counts": dict(category_counts),
+        "average_priority_score": average_priority_score,
+        "latest_email_summary": latest_email_summary,
+        "most_common_action": most_common_action
+    }

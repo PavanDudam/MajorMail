@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 from typing import List, Optional
+from fastapi.middleware.cors import CORSMiddleware
 
 # This line tells the OAuth library to allow insecure HTTP transport for local development.
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
@@ -28,6 +29,18 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="MailMate AI API", lifespan=lifespan)
+
+# --- THE FIX: Add the CORS Middleware ---
+# This tells the backend to allow requests from any origin.
+# For production, you would restrict this to your actual frontend's domain.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"], # Allows all methods
+    allow_headers=["*"], # Allows all headers
+)
+
 app.add_middleware(SessionMiddleware, secret_key=os.urandom(24))
 
 
@@ -65,6 +78,11 @@ async def process_single_email(email_id: int, user_email: str):
             ai_service.calculate_priority_score, email_data, user_email
         )
         await crud.update_email_priority(session, email_id, score)
+        
+        # --- NEW FEATURE: Action Engine Step ---
+        action = await run_in_threadpool(ai_service.determine_action, full_text, category)
+        if action: # Only update if an action was determined
+            await crud.update_email_action(session, email_id, action)
 
         # --- Commit all staged changes for this email at the end ---
         await session.commit()
@@ -129,7 +147,10 @@ async def auth_callback(request: Request, db: AsyncSession = Depends(get_db)):
             "refresh_token": credentials.refresh_token,
         }
         await crud.save_user_token(db, user, token_data)
-        return {"message": f"Successfully authenticated as {user.email}"}
+        # Instead of returning JSON, redirect to frontend with email
+        frontend_url = f"http://localhost:5173/?email={user.email}"
+        return RedirectResponse(url=frontend_url)
+
     except Exception as e:
         print("--- AUTHENTICATION ERROR: FULL TRACEBACK ---")
         traceback.print_exc()
@@ -206,3 +227,25 @@ async def get_emails(
         
     emails = await crud.get_emails_for_user(db, user, category=category)
     return emails
+
+# --- NEW FEATURE: Dossier Endpoint ---
+@app.get("/dossier/{user_email}", response_model=models.SenderDossier, tags=["Dossier"])
+async def get_sender_dossier(
+    user_email: str,
+    sender_email: str, # This is a required query parameter
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Provides a summary of all interactions with a specific sender.
+    Example: /dossier/user@example.com?sender_email=boss@work.com
+    """
+    user = await crud.get_user_by_email(db, email=user_email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    dossier_data = await crud.get_dossier_for_sender(db, user, sender_email)
+    
+    if dossier_data["total_emails"] == 0:
+        raise HTTPException(status_code=404, detail=f"No emails found from sender: {sender_email}")
+        
+    return dossier_data

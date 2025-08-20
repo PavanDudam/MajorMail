@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --radius: 12px;
+}
+
+body {
+  @apply bg-gray-100 text-gray-800 font-sans antialiased;
+}
