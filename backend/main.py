@@ -10,6 +10,7 @@ from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
+from datetime import datetime
 
 # This line tells the OAuth library to allow insecure HTTP transport for local development.
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
@@ -160,6 +161,8 @@ async def auth_callback(request: Request, db: AsyncSession = Depends(get_db)):
         )
 
 
+from fastapi.encoders import jsonable_encoder
+
 @app.get("/emails/fetch/{user_email}", tags=["Emails"])
 async def fetch_emails(user_email: str, db: AsyncSession = Depends(get_db)):
     user = await crud.get_user_by_email(db, email=user_email)
@@ -168,8 +171,10 @@ async def fetch_emails(user_email: str, db: AsyncSession = Depends(get_db)):
             status_code=404, detail="User or user tokens not found. Please login first"
         )
 
+    # Rebuild Gmail service
     credentials = auth.rebuild_credentials(user.tokens[0])
     service = gmail_service.get_gmail_service(credentials)
+
     messages = await run_in_threadpool(gmail_service.fetch_email_list, service)
     if not messages:
         return {"message": "NO new emails found."}
@@ -180,7 +185,16 @@ async def fetch_emails(user_email: str, db: AsyncSession = Depends(get_db)):
             gmail_service.fetch_email_details, service, message["id"]
         )
         parsed_email = gmail_service.parse_email(raw_email)
+
         if parsed_email:
+            # ✅ Ensure received_at is datetime before saving
+            ra = parsed_email.get("received_at")
+            if isinstance(ra, str):
+                try:
+                    parsed_email["received_at"] = datetime.strptime(ra, "%b %d")
+                except Exception:
+                    parsed_email["received_at"] = datetime.utcnow()  # fallback
+
             await crud.create_email(db, user, parsed_email)
             fetched_count += 1
 

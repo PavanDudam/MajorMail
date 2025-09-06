@@ -4,6 +4,7 @@ __pycache__/
 
 # Virtual environment
 mater/
+venv
 
 # Environment variables
 .env
