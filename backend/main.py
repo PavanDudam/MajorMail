@@ -2,7 +2,7 @@
 import os
 import traceback
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, Request, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Depends, Request, HTTPException, BackgroundTasks, Query
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -242,24 +242,85 @@ async def get_emails(
     emails = await crud.get_emails_for_user(db, user, category=category)
     return emails
 
+
 # --- NEW FEATURE: Dossier Endpoint ---
 @app.get("/dossier/{user_email}", response_model=models.SenderDossier, tags=["Dossier"])
 async def get_sender_dossier(
     user_email: str,
-    sender_email: str, # This is a required query parameter
+    search_query: str = Query(..., description="Sender name OR email to search for"),  # Changed parameter name
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Provides a summary of all interactions with a specific sender.
-    Example: /dossier/user@example.com?sender_email=boss@work.com
+    Provides a summary of all interactions using smart search.
+    Works with either sender names or email addresses.
     """
     user = await crud.get_user_by_email(db, email=user_email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
 
-    dossier_data = await crud.get_dossier_for_sender(db, user, sender_email)
+    dossier_data = await crud.get_dossier_for_sender(db, user, search_query)  # Pass search_query
     
     if dossier_data["total_emails"] == 0:
-        raise HTTPException(status_code=404, detail=f"No emails found from sender: {sender_email}")
+        raise HTTPException(status_code=404, detail=f"No emails found for: {search_query}")
         
     return dossier_data
+
+from sqlalchemy import select, func
+@app.get("/debug/senders/{user_email}", tags=["Debug"])
+async def debug_list_senders(
+    user_email: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Debug endpoint to see all senders in the database"""
+    user = await crud.get_user_by_email(db, email=user_email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+    
+    statement = (
+        select(models.Email.sender, func.count(models.Email.id))
+        .where(models.Email.owner_id == user.id)
+        .group_by(models.Email.sender)
+    )
+    
+    results = await db.execute(statement)
+    senders = results.all()
+    
+    return {
+        "total_senders": len(senders),
+        "senders": [{"sender": sender, "count": count} for sender, count in senders]
+    }
+
+# Add this endpoint to your main.py
+@app.get("/gmail/direct-conversations/{user_email}", tags=["Gmail Direct"])
+async def get_direct_conversations(
+    user_email: str,
+    search_query: str = Query(..., description="Sender name OR email to search for"),
+    max_results: int = Query(20, description="Maximum number of emails to fetch"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Fetch RAW conversation threads using smart search (works with names or emails).
+    Includes both incoming emails and your replies.
+    """
+    user = await crud.get_user_by_email(db, email=user_email)
+    if not user or not user.tokens:
+        raise HTTPException(status_code=404, detail="User or tokens not found. Please login first.")
+
+    # Rebuild Gmail service
+    credentials = auth.rebuild_credentials(user.tokens[0])
+    service = gmail_service.get_gmail_service(credentials)
+
+    # Fetch conversations with smart search
+    conversations = await run_in_threadpool(
+        gmail_service.fetch_conversation_threads,
+        service,
+        search_query,
+        max_results
+    )
+
+    return {
+        "search_query": search_query,
+        "total_conversations": len(conversations),
+        "period": "Last 6 months",
+        "conversations": conversations
+    }

@@ -107,3 +107,57 @@ def parse_email(raw_email: dict) -> dict | None:
         "action": "No Action Needed",
         "summary": "",
     }
+
+def fetch_conversation_threads(service, search_query: str, max_results: int = 50):
+    """
+    Fetches complete conversation threads using smart search.
+    Works with either email addresses or sender names.
+    """
+    # Smart search: try both email and name approaches
+    queries_to_try = [
+        f"(from:{search_query} OR to:{search_query}) newer_than:6m",
+        f"(from:{search_query} OR to:{search_query}) newer_than:6m",
+        f"({search_query}) newer_than:6m"  # General search as fallback
+    ]
+    
+    conversation_threads = []
+    
+    for query in queries_to_try:
+        try:
+            results = service.users().messages().list(
+                userId='me',
+                q=query,
+                maxResults=max_results
+            ).execute()
+            
+            messages = results.get('messages', [])
+            
+            for message in messages:
+                msg_details = fetch_email_details(service, message['id'])
+                parsed_email = parse_email(msg_details)
+                
+                if parsed_email:
+                    # Determine direction
+                    is_outgoing = search_query.lower() in parsed_email.get('to', '').lower() or search_query.lower() in parsed_email.get('sender', '').lower()
+                    parsed_email['direction'] = 'outgoing' if is_outgoing else 'incoming'
+                    conversation_threads.append(parsed_email)
+            
+            # If we found results, break out of the loop
+            if conversation_threads:
+                break
+                
+        except Exception as e:
+            print(f"ERROR with query '{query}': {e}")
+            continue
+    
+    # Sort by date and remove duplicates
+    unique_emails = {}
+    for email in conversation_threads:
+        if email.get('message_id'):
+            unique_emails[email['message_id']] = email
+    
+    sorted_emails = sorted(unique_emails.values(), 
+                          key=lambda x: x.get('received_at') or datetime.min, 
+                          reverse=True)
+    
+    return sorted_emails[:max_results]

@@ -5,6 +5,7 @@ from source import models
 from typing import Optional
 from sqlalchemy import func
 from collections import Counter
+from datetime import datetime, timedelta
 
 async def get_user_by_email(db: AsyncSession, email: str) -> models.User | None:
     """
@@ -176,24 +177,34 @@ async def update_email_action(db: AsyncSession, email_id: int, action: str | Non
         db.add(email_to_update)
         print(f"INFO:     Staged action update for email ID: {email_id} to '{action}'")
 
-# --- NEW FEATURE: Dossier ---
 async def get_dossier_for_sender(
     db: AsyncSession, 
     user: models.User, 
-    sender_address: str
+    search_query: str  # Changed from sender_address to search_query
 ) -> dict:
     """
-    Analyzes all emails from a specific sender for a given user.
+    Smart search for dossier - works with names or email parts.
     """
+    print(f"DEBUG: Smart searching for: '{search_query}'")
+    
+    # Calculate date range for last 6 months
+    six_months_ago = datetime.utcnow() - timedelta(days=180)
+    
+    # Smart search: look for the query anywhere in sender field
     statement = (
         select(models.Email)
         .where(models.Email.owner_id == user.id)
-        .where(models.Email.sender.ilike(f"%{sender_address}%"))
-        .order_by(models.Email.received_at.desc()) # Order by date to easily find the latest
+        .where(models.Email.sender.ilike(f"%{search_query}%"))  # Partial match anywhere
+        .where(models.Email.received_at >= six_months_ago)
+        .order_by(models.Email.received_at.desc())
     )
     
     results = await db.execute(statement)
     sender_emails = results.scalars().all()
+    
+    print(f"DEBUG: Found {len(sender_emails)} emails matching '{search_query}'")
+    
+    # ... rest of your existing dossier code ...
     
     if not sender_emails:
         return {
@@ -201,7 +212,9 @@ async def get_dossier_for_sender(
             "category_counts": {},
             "average_priority_score": 0,
             "latest_email_summary": None,
-            "most_common_action": None
+            "most_common_action": None,
+            "conversation_history": [],
+            "period_covered": "No emails found in last 6 months"
         }
 
     total_emails = len(sender_emails)
@@ -209,22 +222,42 @@ async def get_dossier_for_sender(
     # Calculate category counts
     category_counts = Counter(email.category for email in sender_emails)
     
-    # --- NEW CALCULATIONS ---
     # Calculate average priority score
     total_priority = sum(email.priority_score for email in sender_emails)
     average_priority_score = round(total_priority / total_emails, 2) if total_emails > 0 else 0
 
-    # Get the summary of the most recent email (it's the first in the sorted list)
+    # Get the summary of the most recent email
     latest_email_summary = sender_emails[0].summary
 
-    # Find the most common suggested action, ignoring None values
+    # Find the most common suggested action
     actions = [email.suggested_action for email in sender_emails if email.suggested_action]
     most_common_action = Counter(actions).most_common(1)[0][0] if actions else "None"
+    
+    # Build conversation history with dates
+    conversation_history = []
+    for email in sender_emails:
+        conversation_history.append({
+            "subject": email.subject or "No Subject",
+            "summary": email.summary,
+            "received_at": email.received_at.isoformat() if email.received_at else None,
+            "suggested_action": email.suggested_action
+        })
+    
+    # Determine date range covered
+    oldest_email = sender_emails[-1].received_at if sender_emails else None
+    newest_email = sender_emails[0].received_at if sender_emails else None
+    
+    if oldest_email and newest_email:
+        period_covered = f"{oldest_email.strftime('%b %d, %Y')} to {newest_email.strftime('%b %d, %Y')}"
+    else:
+        period_covered = "Date range not available"
     
     return {
         "total_emails": total_emails,
         "category_counts": dict(category_counts),
         "average_priority_score": average_priority_score,
         "latest_email_summary": latest_email_summary,
-        "most_common_action": most_common_action
+        "most_common_action": most_common_action,
+        "conversation_history": conversation_history,
+        "period_covered": period_covered
     }

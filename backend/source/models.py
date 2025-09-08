@@ -63,13 +63,24 @@ class EmailRead(SQLModel):
     received_at: Optional[datetime]
     suggested_action : Optional[str]
 
+# Add this new model for conversation history
+class ConversationMessage(SQLModel):
+    """Represents a single message in a conversation"""
+    subject: str
+    summary: Optional[str]
+    received_at: Optional[datetime]
+    suggested_action: Optional[str]
+
 class SenderDossier(SQLModel):
     """
     This model defines the data structure for the sender dossier response.
     """
     total_emails: int
     category_counts: dict[str, int]
-    # We can add more fields later, like 'latest_email_summary'
     average_priority_score: float
     latest_email_summary: Optional[str]
     most_common_action: Optional[str]
+    # NEW: Add conversation history with dates
+    conversation_history: List[ConversationMessage] = []
+    # NEW: Add time period covered
+    period_covered: Optional[str] = None
