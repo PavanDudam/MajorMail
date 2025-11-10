@@ -129,11 +129,26 @@ async def auth_callback(request: Request, db: AsyncSession = Depends(get_db)):
         return JSONResponse(
             status_code=400, content={"message": "State mismatch error."}
         )
+    
     flow = auth.create_oauth_flow()
     try:
+        # Test database connection first
+        try:
+            await db.execute(text("SELECT 1"))
+        except Exception as db_error:
+            print(f"Database connection error: {db_error}")
+            return JSONResponse(
+                status_code=500, 
+                content={"message": "Database connection failed. Please try again."}
+            )
+
+        # Fetch token from Google
         await run_in_threadpool(
-            flow.fetch_token, authorization_response=str(request.url)
+            flow.fetch_token, 
+            authorization_response=str(request.url),
+            include_granted_scopes='true'
         )
+        
         if not flow.credentials or not flow.credentials.token:
             return JSONResponse(
                 status_code=500,
@@ -141,25 +156,53 @@ async def auth_callback(request: Request, db: AsyncSession = Depends(get_db)):
             )
 
         credentials = flow.credentials
+        
+        # DEBUG: Check what scopes we actually got
+        print(f"DEBUG: Granted scopes: {credentials.scopes}")
+        
+        # Verify Gmail scope is present
+        if 'https://www.googleapis.com/auth/gmail.readonly' not in credentials.scopes:
+            return JSONResponse(
+                status_code=400,
+                content={"message": "Gmail access was not granted. Please ensure you grant all requested permissions."}
+            )
+
         user_info = await run_in_threadpool(auth.get_google_user_info, credentials)
-        user = await crud.get_or_create_user(db, user_info)
-        token_data = {
-            "access_token": credentials.token,
-            "refresh_token": credentials.refresh_token,
-        }
-        await crud.save_user_token(db, user, token_data)
-        # Instead of returning JSON, redirect to frontend with email
-        frontend_url = f"http://localhost:5173/?email={user.email}"
-        return RedirectResponse(url=frontend_url)
+        
+        # Create user with explicit session management
+        try:
+            user = await crud.get_or_create_user(db, user_info)
+            
+            # Convert scopes list to string for storage
+            scopes_string = ','.join(credentials.scopes) if credentials.scopes else ''
+            
+            token_data = {
+                "access_token": credentials.token,
+                "refresh_token": credentials.refresh_token,
+                "scopes": scopes_string
+            }
+            
+            await crud.save_user_token(db, user, token_data)
+            
+            # Commit the transaction explicitly
+            await db.commit()
+            
+            # Instead of returning JSON, redirect to frontend with email
+            frontend_url = f"http://localhost:5173/?email={user.email}"
+            return RedirectResponse(url=frontend_url)
+            
+        except Exception as user_error:
+            await db.rollback()
+            print(f"User creation error: {user_error}")
+            raise
 
     except Exception as e:
         print("--- AUTHENTICATION ERROR: FULL TRACEBACK ---")
         traceback.print_exc()
         print("--------------------------------------------")
         return JSONResponse(
-            status_code=500, content={"message": "Authentication failed."}
+            status_code=500, content={"message": f"Authentication failed: {str(e)}"}
         )
-
 
 from fastapi.encoders import jsonable_encoder
 

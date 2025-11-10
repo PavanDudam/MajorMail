@@ -11,6 +11,7 @@ class UserToken(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id")
     access_token: str
     refresh_token: Optional[str] = None
+    scopes: Optional[str] = Field(default=None)  # NEW: Store granted scopes
     user: "User" = Relationship(back_populates="tokens")
 
 
